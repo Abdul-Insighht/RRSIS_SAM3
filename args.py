@@ -72,6 +72,8 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='Dataloader workers')
+    parser.add_argument('--print_freq', type=int, default=50,
+                        help='Print frequency')
 
     # ====== Distributed ======
     parser.add_argument('--local_rank', type=int, default=-1,

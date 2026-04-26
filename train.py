@@ -25,6 +25,7 @@ from args import get_args
 from data.dataset import get_dataset, collate_fn
 from lib.rrsis_sam3_model import RRSIS_SAM3
 from lib.rs_adapters import get_trainable_params_summary
+import utils
 
 try:
     import wandb
@@ -61,12 +62,14 @@ class AverageMeter:
         self.avg = self.sum / self.count
 
 
-def compute_iou(pred, target, threshold=0.5):
+def compute_iou(pred, target, threshold=0.5, return_components=False):
     """Compute IoU between predicted and target masks."""
     pred_binary = (torch.sigmoid(pred) > threshold).float()
     intersection = (pred_binary * target).sum(dim=(1, 2, 3))
     union = pred_binary.sum(dim=(1, 2, 3)) + target.sum(dim=(1, 2, 3)) - intersection
     iou = (intersection + 1e-6) / (union + 1e-6)
+    if return_components:
+        return iou, intersection.sum().item(), union.sum().item()
     return iou.mean().item()
 
 
@@ -127,10 +130,19 @@ def get_scheduler(optimizer, args, steps_per_epoch):
 def validate(model, val_loader, device, epoch):
     """Run validation and compute metrics."""
     model.eval()
-    iou_meter = AverageMeter()
-    loss_meter = AverageMeter()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test: '
+    
+    cum_I, cum_U = 0, 0
+    eval_seg_iou_list = [.5, .6, .7, .8, .9]
+    seg_correct = np.zeros(len(eval_seg_iou_list), dtype=np.int32)
+    seg_total = 0
+    mean_IoU = []
+    total_loss = 0
+    total_its = 0
 
-    for batch_idx, (images, masks, captions) in enumerate(val_loader):
+    for images, masks, captions in metric_logger.log_every(val_loader, 100, header):
+        total_its += 1
         images = images.to(device)
         masks = masks.to(device)
 
@@ -142,25 +154,49 @@ def validate(model, val_loader, device, epoch):
         with torch.cuda.amp.autocast(enabled=True):
             outputs = model(images, captions, masks)
 
-        loss_meter.update(outputs['loss'].item(), images.size(0))
-        iou = compute_iou(outputs['pred_masks'], masks)
-        iou_meter.update(iou, images.size(0))
+        loss = outputs['loss'].item()
+        total_loss += loss
 
-    print(f"  [Val] Epoch {epoch}: Loss={loss_meter.avg:.4f}, mIoU={iou_meter.avg:.4f}")
-    return iou_meter.avg, loss_meter.avg
+        iou_tensor, I, U = compute_iou(outputs['pred_masks'], masks, return_components=True)
+        
+        # Calculate per sample precision
+        for iou in iou_tensor:
+            iou_val = iou.item()
+            mean_IoU.append(iou_val)
+            for n_eval_iou in range(len(eval_seg_iou_list)):
+                eval_seg_iou = eval_seg_iou_list[n_eval_iou]
+                seg_correct[n_eval_iou] += (iou_val >= eval_seg_iou)
+            seg_total += 1
+
+        cum_I += I
+        cum_U += U
+
+    mIoU = np.mean(mean_IoU)
+    print('Final results: Mean IoU is %.2f%%' % (mIoU * 100.))
+    results_str = ''
+    for n_eval_iou in range(len(eval_seg_iou_list)):
+        results_str += '    Precision@%s = %.2f%%\n' % \
+                       (str(eval_seg_iou_list[n_eval_iou]), seg_correct[n_eval_iou] * 100. / seg_total)
+    overall_iou = (cum_I * 100. / cum_U) if cum_U > 0 else 0
+    results_str += '    Overall IoU = %.2f%%\n' % overall_iou
+    print(results_str)
+
+    avg_loss = total_loss / max(total_its, 1)
+    return mIoU * 100., overall_iou
 
 
 def train_one_epoch(model, train_loader, optimizer, scheduler, scaler, device, epoch, args):
     """Train for one epoch."""
     model.train()
-    loss_meter = AverageMeter()
-    iou_meter = AverageMeter()
-    batch_time = AverageMeter()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    metric_logger.add_meter('loss', utils.SmoothedValue(window_size=20, fmt='{value:.4f}'))
+    metric_logger.add_meter('iou', utils.SmoothedValue(window_size=20, fmt='{value:.4f}'))
+    header = 'Epoch: [{}]'.format(epoch)
 
     optimizer.zero_grad()
-    end = time.time()
 
-    for batch_idx, (images, masks, captions) in enumerate(train_loader):
+    for batch_idx, (images, masks, captions) in enumerate(metric_logger.log_every(train_loader, args.print_freq, header)):
         images = images.to(device)
         masks = masks.to(device)
 
@@ -182,21 +218,12 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, scaler, device, e
             scheduler.step()
 
         # Metrics
-        loss_meter.update(outputs['loss'].item(), images.size(0))
         with torch.no_grad():
             iou = compute_iou(outputs['pred_masks'], masks)
-            iou_meter.update(iou, images.size(0))
-        batch_time.update(time.time() - end)
-        end = time.time()
+            
+        metric_logger.update(loss=outputs['loss'].item(), iou=iou, lr=optimizer.param_groups[0]["lr"])
 
-        # Logging
-        if (batch_idx + 1) % 50 == 0 or batch_idx == 0:
-            lr_current = optimizer.param_groups[0]['lr']
-            print(f"  [Train] Epoch {epoch} [{batch_idx+1}/{len(train_loader)}] "
-                  f"Loss={loss_meter.avg:.4f} mIoU={iou_meter.avg:.4f} "
-                  f"LR={lr_current:.2e} Time={batch_time.avg:.2f}s")
-
-    return loss_meter.avg, iou_meter.avg
+    return metric_logger.meters['loss'].global_avg, metric_logger.meters['iou'].global_avg
 
 
 def main():
@@ -291,7 +318,10 @@ def main():
         )
 
         # Validate
-        val_iou, val_loss = validate(model, val_loader, device, epoch + 1)
+        val_iou, val_overall_iou = validate(model, val_loader, device, epoch + 1)
+        
+        print('Average object IoU {}'.format(val_iou))
+        print('Overall IoU {}'.format(val_overall_iou))
 
         # Wandb logging
         if HAS_WANDB:
@@ -299,15 +329,16 @@ def main():
                 'epoch': epoch + 1,
                 'train_loss': train_loss,
                 'train_iou': train_iou,
-                'val_loss': val_loss,
                 'val_iou': val_iou,
+                'val_overall_iou': val_overall_iou,
                 'lr': optimizer.param_groups[0]['lr'],
             })
 
         # Save best model
-        is_best = val_iou > best_iou
+        is_best = (val_iou + val_overall_iou) > best_iou
         if is_best:
-            best_iou = val_iou
+            best_iou = val_iou + val_overall_iou
+            print('Better epoch: {}\n'.format(epoch))
             save_path = os.path.join(args.output_dir, 'best_model.pth')
             torch.save({
                 'epoch': epoch + 1,
@@ -316,7 +347,7 @@ def main():
                 'best_iou': best_iou,
                 'args': vars(args),
             }, save_path)
-            print(f"  ★ New best model saved! mIoU={best_iou:.4f}")
+            print(f"  ★ New best model saved!")
 
         # Save latest model at every epoch
         latest_save_path = os.path.join(args.output_dir, 'latest_model.pth')
