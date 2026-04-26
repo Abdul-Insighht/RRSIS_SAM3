@@ -561,6 +561,29 @@ class Attention(nn.Module):
 
         assert self.freqs_cis is not None
 
+        freqs_cis = self.freqs_cis
+        seq_len = q.shape[2]
+        
+        # Dynamically interpolate RoPE if sequence length changes (e.g. arbitrary image size)
+        if seq_len != freqs_cis.shape[0]:
+            num_spatial = seq_len - (1 if self.cls_token else 0)
+            h = w = int(math.sqrt(num_spatial))
+            scale_pos = 1.0
+            if self.rope_interp:
+                scale_pos = self.rope_pt_size[0] / h
+            freqs_cis = self.compute_cis(
+                end_x=h, end_y=w, scale_pos=scale_pos
+            ).to(q.device)
+            if self.cls_token:
+                t = torch.zeros(self.head_dim // 2, dtype=torch.float32, device=q.device)
+                cls_freqs_cis = torch.polar(torch.ones_like(t), t)[None, :]
+                freqs_cis = torch.cat([cls_freqs_cis, freqs_cis], dim=0)
+            
+            if self.use_rope_real:
+                return apply_rotary_enc_real(
+                    q, k, freqs_cis_imag=freqs_cis.imag, freqs_cis_real=freqs_cis.real
+                )
+
         if self.use_rope_real:
             return apply_rotary_enc_real(
                 q,
@@ -568,7 +591,7 @@ class Attention(nn.Module):
                 freqs_cis_imag=self.freqs_cis_imag,
                 freqs_cis_real=self.freqs_cis_real,
             )
-        return apply_rotary_enc(q, k, freqs_cis=self.freqs_cis)
+        return apply_rotary_enc(q, k, freqs_cis=freqs_cis)
 
     def forward(self, x: Tensor) -> Tensor:
         s = 1 if self.cls_token else 0  # used to exclude cls_token
@@ -581,7 +604,7 @@ class Attention(nn.Module):
             assert x.ndim == 3
             B, L, _ = x.shape
             ndim = 3
-            H = W = math.sqrt(L - s)
+            H = W = int(math.sqrt(L - s))
 
         # qkv with shape (3, B, nHead, L, C)
         qkv = self.qkv(x).reshape(B, L, 3, self.num_heads, -1)
@@ -591,15 +614,21 @@ class Attention(nn.Module):
         # handle rope and rel pos embeddings
         q, k = self._apply_rope(q, k)
         if self.use_rel_pos:
+            relative_coords = self.relative_coords
+            if self.input_size is not None and (H != self.input_size[0] or W != self.input_size[1]):
+                q_coords = torch.arange(H)[:, None]
+                k_coords = torch.arange(W)[None, :]
+                relative_coords = ((q_coords - k_coords) + (H - 1)).long().to(x.device)
+
             q, k = concat_rel_pos(
                 q.flatten(0, 1),
                 k.flatten(0, 1),
                 (H, W),
-                x.shape[1:3],
+                x.shape[1:3] if ndim == 4 else (H, W),
                 self.rel_pos_h,
                 self.rel_pos_w,
                 rescale=True,
-                relative_coords=self.relative_coords,
+                relative_coords=relative_coords,
             )
 
             # sdpa expects [B, nheads, H*W, C] so we transpose back
