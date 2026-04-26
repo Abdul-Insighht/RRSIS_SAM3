@@ -53,6 +53,8 @@ class REFER:
         possible_data_dirs = [
             osp.join(data_root, dataset),                 # /data_root/rrsis_hr
             osp.join(data_root, 'data', dataset),         # /data_root/data/rrsis_hr
+            osp.join(data_root, 'data', 'rrsisd'),        # Kaggle dataset has rrsisd inside data!
+            osp.join(data_root, 'rrsisd'),
             osp.join(data_root, 'data'),                  # /data_root/data
             data_root                                     # /data_root
         ]
