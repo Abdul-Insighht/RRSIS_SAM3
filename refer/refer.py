@@ -49,11 +49,19 @@ class REFER:
         self.ROOT_DIR = osp.abspath(osp.dirname(__file__))
         
         # Robust DATA_DIR resolution for Kaggle
-        expected_data_dir = osp.join(data_root, dataset)
-        if osp.exists(osp.join(data_root, 'instances.json')):
-            self.DATA_DIR = data_root
-        else:
-            self.DATA_DIR = expected_data_dir
+        ref_filename = 'refs(' + splitBy + ').p'
+        possible_data_dirs = [
+            osp.join(data_root, dataset),                 # /data_root/rrsis_hr
+            osp.join(data_root, 'data', dataset),         # /data_root/data/rrsis_hr
+            osp.join(data_root, 'data'),                  # /data_root/data
+            data_root                                     # /data_root
+        ]
+        
+        self.DATA_DIR = possible_data_dirs[0] # Default
+        for p in possible_data_dirs:
+            if osp.exists(osp.join(p, ref_filename)):
+                self.DATA_DIR = p
+                break
 
         if dataset in ['refcoco', 'refcoco+', 'refcocog']:
             self.IMAGE_DIR = osp.join(data_root, 'images/mscoco/images/train2014')
