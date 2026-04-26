@@ -1,0 +1,22 @@
+# Pre-trained weights
+pre-trained-weights/
+*.pt
+*.pth
+
+# Python caches
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Output directories
+output/
+final_outputs/
+*.log
+
+# IDEs
+.idea/
+.vscode/
+
+# Kaggle / Environment
+environment.yml
+venv/
