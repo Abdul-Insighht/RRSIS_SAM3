@@ -318,6 +318,17 @@ def main():
             }, save_path)
             print(f"  ★ New best model saved! mIoU={best_iou:.4f}")
 
+        # Save latest model at every epoch
+        latest_save_path = os.path.join(args.output_dir, 'latest_model.pth')
+        torch.save({
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'best_iou': best_iou,
+            'args': vars(args),
+        }, latest_save_path)
+        print(f"  Latest model weights updated for epoch {epoch+1}.")
+
         # Save checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
             save_path = os.path.join(args.output_dir, f'checkpoint_epoch{epoch+1}.pth')
