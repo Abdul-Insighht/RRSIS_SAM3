@@ -1,4 +1,4 @@
-# Pre-trained weights
+# Pre-trained weights (Prevent 3GB upload to GitHub)
 pre-trained-weights/
 *.pt
 *.pth
@@ -12,10 +12,6 @@ __pycache__/
 output/
 final_outputs/
 *.log
-
-# IDEs
-.idea/
-.vscode/
 
 # Kaggle / Environment
 environment.yml
