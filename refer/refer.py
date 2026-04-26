@@ -47,13 +47,26 @@ class REFER:
         if dataset == 'refcocog':
             print('Split by {}!'.format(splitBy))
         self.ROOT_DIR = osp.abspath(osp.dirname(__file__))
-        self.DATA_DIR = osp.join(data_root, dataset)
+        
+        # Robust DATA_DIR resolution for Kaggle
+        expected_data_dir = osp.join(data_root, dataset)
+        if osp.exists(osp.join(data_root, 'instances.json')):
+            self.DATA_DIR = data_root
+        else:
+            self.DATA_DIR = expected_data_dir
+
         if dataset in ['refcoco', 'refcoco+', 'refcocog']:
             self.IMAGE_DIR = osp.join(data_root, 'images/mscoco/images/train2014')
         elif dataset == 'refclef':
             self.IMAGE_DIR = osp.join(data_root, 'images/saiapr_tc-12')
         elif dataset == 'rrsisd':
             self.IMAGE_DIR = osp.join(data_root, 'images/rrsisd/JPEGImages')
+        elif dataset == 'rrsis_hr':
+            # Support both Kaggle's resis-hr structure and standard structure
+            if osp.exists(osp.join(data_root, '../Images')):
+                self.IMAGE_DIR = osp.abspath(osp.join(data_root, '../Images'))
+            else:
+                self.IMAGE_DIR = osp.join(data_root, 'images', 'rrsis_hr')
         else:
             print('No refer dataset is called [%s]' % dataset)
             sys.exit()
