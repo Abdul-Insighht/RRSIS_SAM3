@@ -23,6 +23,7 @@ showMask   - show mask of the referred object given ref
 """
 
 import sys
+import os
 import os.path as osp
 import json
 import pickle as pickle
@@ -72,11 +73,18 @@ class REFER:
         elif dataset == 'rrsisd':
             self.IMAGE_DIR = osp.join(data_root, 'images/rrsisd/JPEGImages')
         elif dataset == 'rrsis_hr':
-            # Support both Kaggle's resis-hr structure and standard structure
-            if osp.exists(osp.join(data_root, '../Images')):
-                self.IMAGE_DIR = osp.abspath(osp.join(data_root, '../Images'))
-            else:
-                self.IMAGE_DIR = osp.join(data_root, 'images', 'rrsis_hr')
+            # Support multiple possible Kaggle structures
+            possible_image_dirs = [
+                osp.join(data_root, 'Images'),
+                osp.join(data_root, 'data', 'images'),
+                osp.join(data_root, 'images', 'rrsis_hr'),
+                osp.abspath(osp.join(data_root, '../Images'))
+            ]
+            self.IMAGE_DIR = possible_image_dirs[0]
+            for p in possible_image_dirs:
+                if osp.exists(p) and len(os.listdir(p)) > 0:
+                    self.IMAGE_DIR = p
+                    break
         else:
             print('No refer dataset is called [%s]' % dataset)
             sys.exit()
