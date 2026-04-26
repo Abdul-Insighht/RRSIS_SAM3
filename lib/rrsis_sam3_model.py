@@ -179,7 +179,15 @@ class RRSIS_SAM3(nn.Module):
         # Step 2: Create find_input (tells SAM3 which image/text pairs to process)
         img_ids = torch.arange(B, device=device)
         text_ids = torch.arange(B, device=device)
-        find_input = FindStage(img_ids=img_ids, text_ids=text_ids)
+        find_input = FindStage(
+            img_ids=img_ids, 
+            text_ids=text_ids,
+            input_boxes=torch.zeros(B, 0, 4, device=device),
+            input_boxes_mask=torch.zeros(B, 0, device=device, dtype=torch.bool),
+            input_boxes_label=torch.zeros(B, 0, device=device, dtype=torch.long),
+            input_points=torch.zeros(B, 0, 2, device=device),
+            input_points_mask=torch.zeros(B, 0, device=device, dtype=torch.bool),
+        )
 
         # Step 3: Create empty geometric prompt (we use text-only prompting)
         geometric_prompt = Prompt(
