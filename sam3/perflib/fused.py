@@ -9,7 +9,7 @@ addmm_act_op = torch.ops.aten._addmm_activation
 
 def addmm_act(activation, linear, mat1):
     if torch.is_grad_enabled():
-        raise ValueError("Expected grad to be disabled.")
+        return activation()(linear(mat1)) if isinstance(activation, type) else activation(linear(mat1))
     self = linear.bias.detach()
     mat2 = linear.weight.detach()
     self = self.to(torch.bfloat16)
