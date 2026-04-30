@@ -64,9 +64,10 @@ class OTSegmentationLoss(nn.Module):
     def __init__(
         self,
         use_unbalanced=True,
-        background_cost=0.5,
-        reg_target=1e-2,
+        background_cost=1.0,
+        reg_target=1.0,
         reg_pred=1.0,
+        reg_dimless=0.15,
         mask_loss_weight=5.0,
         box_loss_weight=2.0,
         cls_loss_weight=1.0,
@@ -92,12 +93,16 @@ class OTSegmentationLoss(nn.Module):
                     background_cost=background_cost,
                     reg_target=reg_target,
                     reg_pred=reg_pred,
+                    reg_dimless=reg_dimless,
+                    num_iter=50,
                 )
             else:
                 self.matcher = BalancedSinkhorn(
                     cls_match_module=NegativeProbLoss(reduction="none"),
                     loc_match_module=GIoULoss(reduction="none"),
                     background_cost=background_cost,
+                    reg_dimless=reg_dimless,
+                    num_iter=50,
                 )
             self.giou_loss_fn = GIoULoss(reduction="none")
             print("[OTLoss] UOT matching enabled")
@@ -193,28 +198,33 @@ class OTSegmentationLoss(nn.Module):
         # Sinkhorn iteration is numerically unstable in FP16. We must disable
         # AMP and cast to FP32 to prevent NaNs in the transport plan.
         with torch.autocast(device_type=device.type if device.type != 'mps' else 'cpu', enabled=False):
+            # Clamp logits and boxes to sane ranges to prevent cost matrix explosion
+            safe_logits = pred_logits.float().clamp(-10.0, 10.0)
+            safe_boxes = pred_boxes.float().clamp(0.0, 1.0)
+            safe_gt_boxes = gt_boxes.float().clamp(0.0, 1.0)
+
             input_dict = {
-                "pred_logits": pred_logits.float(),
-                "pred_boxes": pred_boxes.float(),
+                "pred_logits": safe_logits,
+                "pred_boxes": safe_boxes,
             }
             target_dict = {
                 "labels": torch.zeros(B, 1, dtype=torch.long, device=device),
-                "boxes": gt_boxes.float(),
+                "boxes": safe_gt_boxes,
                 "mask": torch.ones(B, 1, dtype=torch.bool, device=device),
             }
-    
+
             matching = self.matcher(input_dict, target_dict)
             # matching shape: (B, N, 2) — [:,:,0] = foreground, [:,:,1] = background
             fg_weights = matching[:, :, 0]  # (B, N)
-        
+
         # Cast weights back to match pred_logits dtype for loss computation
         fg_weights = fg_weights.to(dtype=pred_logits.dtype)
 
         # --- Weighted GIoU Loss ---
         gt_boxes_expanded = gt_boxes.expand_as(pred_boxes)  # (B, N, 4)
         giou_per_query = self.giou_loss_fn(
-            pred_boxes.reshape(-1, 4),
-            gt_boxes_expanded.reshape(-1, 4),
+            pred_boxes.float().clamp(0.0, 1.0).reshape(-1, 4),
+            gt_boxes_expanded.float().clamp(0.0, 1.0).reshape(-1, 4),
         ).view(B, -1)  # (B, N)
         giou_loss = (giou_per_query * fg_weights).sum() / fg_weights.sum().clamp(min=1)
 
