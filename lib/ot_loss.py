@@ -17,12 +17,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 try:
+    # uotod's __init__.py imports a 'sample' module that tries to load a
+    # motorbike.jpg image file, which may not exist in pip installations.
+    # We patch sys.modules to skip that broken import.
+    import sys
+    import types
+    
+    # Create a dummy 'uotod.sample' module so the real __init__ doesn't crash
+    dummy_sample = types.ModuleType("uotod.sample")
+    sys.modules["uotod.sample"] = dummy_sample
+    
+    # Also create a dummy motorbike submodule
+    dummy_motorbike = types.ModuleType("uotod.sample.motorbike")
+    sys.modules["uotod.sample.motorbike"] = dummy_motorbike
+    
     from uotod.match import UnbalancedSinkhorn, BalancedSinkhorn
     from uotod.loss import GIoULoss, NegativeProbLoss
     HAS_UOTOD = True
-except ImportError:
+except Exception as e:
     HAS_UOTOD = False
-    print("[WARNING] uotod not installed. Install with: pip install uotod")
+    print(f"[WARNING] uotod import failed: {e}")
     print("[WARNING] Falling back to basic Dice+BCE loss.")
 
 
