@@ -28,3 +28,6 @@ matplotlib
 
 # ====== RRSIS Specific ======
 wandb
+
+# ====== UOT (Unbalanced Optimal Transport) ======
+uotod>=0.2.0
