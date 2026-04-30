@@ -84,7 +84,7 @@ def evaluate(model, test_loader, device, args):
                 for cap in cap_list:
                     start = time.time()
                     with torch.cuda.amp.autocast(enabled=True):
-                        outputs = model([images[0:1]], [cap], masks[0:1])
+                        outputs = model(images[0:1], [cap], masks[0:1])
                     total_time += time.time() - start
 
                     metrics = compute_metrics(outputs['pred_masks'], masks[0:1])
@@ -193,7 +193,7 @@ def main():
     # Load trained weights
     if args.resume and os.path.isfile(args.resume):
         print(f"Loading checkpoint: {args.resume}")
-        ckpt = torch.load(args.resume, map_location='cpu')
+        ckpt = torch.load(args.resume, map_location='cpu', weights_only=False)
         model.load_state_dict(ckpt['model_state_dict'], strict=False)
         print(f"  Loaded from epoch {ckpt.get('epoch', '?')}, "
               f"best_iou={ckpt.get('best_iou', '?')}")

@@ -70,7 +70,7 @@ class REFER:
             self.IMAGE_DIR = osp.join(data_root, 'images/mscoco/images/train2014')
         elif dataset == 'refclef':
             self.IMAGE_DIR = osp.join(data_root, 'images/saiapr_tc-12')
-        elif dataset == 'rrsisd':
+        elif dataset in ['rrsisd', 'rrsis_d']:
             self.IMAGE_DIR = osp.join(data_root, 'images/rrsisd/JPEGImages')
         elif dataset == 'rrsis_hr':
             # Support multiple possible Kaggle structures

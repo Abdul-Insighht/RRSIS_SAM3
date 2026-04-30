@@ -289,7 +289,7 @@ def main():
     best_iou = 0.0
     if args.resume and os.path.isfile(args.resume):
         print(f"Resuming from {args.resume}")
-        ckpt = torch.load(args.resume, map_location='cpu')
+        ckpt = torch.load(args.resume, map_location='cpu', weights_only=False)
         model.load_state_dict(ckpt['model_state_dict'], strict=False)
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
         start_epoch = ckpt.get('epoch', 0)
