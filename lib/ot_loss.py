@@ -190,19 +190,25 @@ class OTSegmentationLoss(nn.Module):
             return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
 
         # --- OT Matching ---
-        input_dict = {
-            "pred_logits": pred_logits,
-            "pred_boxes": pred_boxes,
-        }
-        target_dict = {
-            "labels": torch.zeros(B, 1, dtype=torch.long, device=device),
-            "boxes": gt_boxes,
-            "mask": torch.ones(B, 1, dtype=torch.bool, device=device),
-        }
-
-        matching = self.matcher(input_dict, target_dict)
-        # matching shape: (B, N, 2) — [:,:,0] = foreground, [:,:,1] = background
-        fg_weights = matching[:, :, 0]  # (B, N)
+        # Sinkhorn iteration is numerically unstable in FP16. We must disable
+        # AMP and cast to FP32 to prevent NaNs in the transport plan.
+        with torch.autocast(device_type=device.type if device.type != 'mps' else 'cpu', enabled=False):
+            input_dict = {
+                "pred_logits": pred_logits.float(),
+                "pred_boxes": pred_boxes.float(),
+            }
+            target_dict = {
+                "labels": torch.zeros(B, 1, dtype=torch.long, device=device),
+                "boxes": gt_boxes.float(),
+                "mask": torch.ones(B, 1, dtype=torch.bool, device=device),
+            }
+    
+            matching = self.matcher(input_dict, target_dict)
+            # matching shape: (B, N, 2) — [:,:,0] = foreground, [:,:,1] = background
+            fg_weights = matching[:, :, 0]  # (B, N)
+        
+        # Cast weights back to match pred_logits dtype for loss computation
+        fg_weights = fg_weights.to(dtype=pred_logits.dtype)
 
         # --- Weighted GIoU Loss ---
         gt_boxes_expanded = gt_boxes.expand_as(pred_boxes)  # (B, N, 4)
