@@ -110,10 +110,7 @@ class RRSIS_SAM3(nn.Module):
 
         # ====== OT-based Loss ======
         print("[RRSIS_SAM3] Initializing OT Segmentation Loss")
-        self.ot_loss = OTSegmentationLoss(
-            use_unbalanced=use_unbalanced_ot,
-            background_cost=ot_background_cost,
-        )
+        self.ot_loss = OTSegmentationLoss()
 
         # Print parameter summary
         get_trainable_params_summary(self)
