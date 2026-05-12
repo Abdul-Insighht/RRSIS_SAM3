@@ -37,8 +37,6 @@ from sam3.model.data_misc import FindStage
 from sam3.model.geometry_encoders import Prompt
 
 from .rs_adapters import inject_lora_adapters, get_trainable_params_summary
-from .ot_feature_alignment import OTFeatureAligner
-from .ot_loss import OTSegmentationLoss
 
 
 class RRSIS_SAM3(nn.Module):
@@ -97,20 +95,6 @@ class RRSIS_SAM3(nn.Module):
         # Step 4: Enable gradient checkpointing for memory savings
         if gradient_checkpointing:
             self._enable_gradient_checkpointing()
-
-        # ====== OT Feature Alignment Module ======
-        d_model = self.sam3.hidden_dim  # typically 256
-        print(f"[RRSIS_SAM3] Initializing OT Feature Aligner (d_model={d_model})")
-        self.ot_aligner = OTFeatureAligner(
-            d_model=d_model,
-            reg=ot_reg,
-            num_iter=ot_num_iter,
-            residual_weight=ot_residual_weight,
-        )
-
-        # ====== OT-based Loss ======
-        print("[RRSIS_SAM3] Initializing OT Segmentation Loss")
-        self.ot_loss = OTSegmentationLoss()
 
         # Print parameter summary
         get_trainable_params_summary(self)
@@ -200,27 +184,6 @@ class RRSIS_SAM3(nn.Module):
         text_out = self.sam3.backbone.forward_text(captions, device=device)
         backbone_out.update(text_out)
 
-        # Step 1.5: OT Feature Alignment — fuse text into image spatially
-        # before the encoder sees the features
-        if hasattr(self, 'ot_aligner') and 'backbone_fpn' in backbone_out:
-            text_feats = backbone_out.get('language_features', None)
-            text_mask = backbone_out.get('language_mask', None)
-            if text_feats is not None:
-                fpn_feats = backbone_out['backbone_fpn']
-                for i in range(len(fpn_feats)):
-                    feat = fpn_feats[i]
-                    # Handle both plain tensors and NestedTensor
-                    if hasattr(feat, 'tensors'):
-                        feat_tensor = feat.tensors
-                    else:
-                        feat_tensor = feat
-                    if feat_tensor.dim() == 4:  # (B, C, H, W)
-                        aligned = self.ot_aligner(feat_tensor, text_feats, text_mask)
-                        if hasattr(feat, 'tensors'):
-                            feat.tensors = aligned
-                        else:
-                            fpn_feats[i] = aligned
-
         # Step 2: Create find_input (tells SAM3 which image/text pairs to process)
         img_ids = torch.arange(B, device=device)
         text_ids = torch.arange(B, device=device)
@@ -287,10 +250,7 @@ class RRSIS_SAM3(nn.Module):
 
         # Step 9: Compute loss if ground truth is provided
         if masks_gt is not None:
-            if hasattr(self, 'ot_loss'):
-                result['loss'] = self.ot_loss(result, masks_gt, self.image_size)
-            else:
-                result['loss'] = self._compute_loss(result['pred_masks'], masks_gt)
+            result['loss'] = self._compute_loss(result['pred_masks'], masks_gt)
 
         return result
 
